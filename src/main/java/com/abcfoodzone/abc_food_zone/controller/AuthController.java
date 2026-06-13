@@ -11,8 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -47,70 +47,52 @@ public class AuthController {
                     .body(new RegisterResponse("Email already exists!", null, null, null, null));
         }
 
-        // Convert role string to enum (only ADMIN and CUSTOMER)
+        // Convert role string to enum
         User.Role role;
         try {
             role = User.Role.valueOf(request.getRole().toUpperCase());
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
-                    .body(new RegisterResponse("Invalid role! Use ADMIN or CUSTOMER",
-                            null, null, null, null));
+                    .body(new RegisterResponse("Invalid role! Use ADMIN or CUSTOMER", null, null, null, null));
         }
 
-        // Create new user
+        // Create and save user
         User user = new User();
         user.setName(request.getName());
         user.setEmail(request.getEmail());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRole(role);
-
-        // Save user to database
         User savedUser = userRepository.save(user);
 
         // Return response
-        RegisterResponse response = new RegisterResponse(
-                "User registered successfully!",
-                savedUser.getId(),
-                savedUser.getEmail(),
-                savedUser.getName(),
-                savedUser.getRole().toString()
-        );
-
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(new RegisterResponse("User registered successfully!", savedUser.getId(),
+                        savedUser.getEmail(), savedUser.getName(), savedUser.getRole().toString()));
     }
 
-    // Login endpoint
+    // Login endpoint - SIMPLE VERSION
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+
+        // Try to authenticate
         try {
-            // Authenticate user
-            Authentication authentication = authenticationManager.authenticate(
+            authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
             );
-
-            // Load user details
-            UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
-
-            // Generate JWT token
-            String token = jwtUtil.generateToken(userDetails);
-
-            // Get user from database for role
-            User user = userRepository.findByEmail(request.getEmail()).orElse(null);
-            String role = user != null ? user.getRole().toString() : "";
-
-            // Return response with token
-            LoginResponse response = new LoginResponse(
-                    token,
-                    "Login successful!",
-                    request.getEmail(),
-                    role
-            );
-
-            return ResponseEntity.ok(response);
-
-        } catch (Exception e) {
+        } catch (BadCredentialsException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new LoginResponse(null, "Invalid email or password!", null, null));
         }
+
+        // If authenticated, generate token
+        UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
+        String token = jwtUtil.generateToken(userDetails);
+
+        // Get user role
+        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+        String role = user != null ? user.getRole().toString() : "";
+
+        // Return token
+        return ResponseEntity.ok(new LoginResponse(token, "Login successful!", request.getEmail(), role));
     }
 }
